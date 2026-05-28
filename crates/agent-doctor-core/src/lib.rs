@@ -22,9 +22,10 @@ pub use probe::{
     probe_all_runtimes, probe_runtime, ProbeCheck, ProbeSeverity, ProbeStatus, RuntimeProbeReport,
 };
 pub use repair::{
-    build_repair_preview, build_repair_preview_from_bundle, execute_repair, probe_health_summary,
-    suggest_hermes_repairs, suggest_runtime_repairs, AuditReport, BackupSnapshot, DiagnosticBundle,
-    DiagnosticFact, RedactedFact, RedactionPolicy, Redactor, RepairAction, RepairActionKind,
-    RepairExecuteOptions, RepairExecuteReport, RepairPlan, RepairRisk, SensitivityLevel,
+    build_repair_preview, build_repair_preview_from_bundle, execute_repair,
+    list_runtime_backup_ids, probe_health_summary, restore_runtime_backup, suggest_hermes_repairs,
+    suggest_runtime_repairs, AuditReport, BackupSnapshot, DiagnosticBundle, DiagnosticFact,
+    RedactedFact, RedactionPolicy, Redactor, RepairAction, RepairActionKind, RepairExecuteOptions,
+    RepairExecuteReport, RepairPlan, RepairRisk, RestoreReport, SensitivityLevel,
     SkippedRepairAction, SnapshotFile, SuggestedRepair,
 };

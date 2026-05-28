@@ -61,12 +61,20 @@ Teams can require:
 5. `probe_runtime` (after)
 6. write `AuditReport` with verification summary and rollback hint
 
-Runtime-specific rule playbooks extend step 4. Hermes v1 rules:
+Runtime-specific rule playbooks extend step 4. **Hermes v1 (shipped):**
 
 - tighten `~/.hermes/.env` permissions to `600` when too open
 - deduplicate repeated API key env entries (keep last non-empty value)
 - fill missing/empty `model.*` fields from the active Agent Doctor profile preset
+- when the provider API key is missing: append a `VAR=` placeholder to `~/.hermes/.env` (or create the file) and write a local guide under `~/.config/agent-doctor/guides/hermes-api-key-<VAR>.md`
 
-API key values are never auto-filled; missing secrets remain manual review.
+**Never shipped / not planned for v1:** auto-filling or uploading API keys; AI choosing arbitrary shell commands.
 
-The desktop app shows suggested fixes after diagnosis and can run `run_repair_execute_command` (backup → playbook → re-probe → audit).
+**Rollback:** backups live under `~/.config/agent-doctor/backups/<runtime>-<timestamp>/`. Restore with:
+
+```bash
+agent-doctor repair hermes --rollback
+agent-doctor repair hermes --rollback --backup hermes-2026-05-28T12-00-00
+```
+
+The desktop app shows suggested fixes after diagnosis, runs apply (backup → playbook → re-probe → audit), can open the API key guide, and can roll back from the latest backup.

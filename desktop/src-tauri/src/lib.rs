@@ -1,13 +1,14 @@
 use agent_doctor_core::{
-    apply_profile_model, build_repair_preview_from_bundle, execute_repair, load_profiles,
-    probe_runtime, run_doctor, set_runtime_model, suggest_runtime_repairs, use_profile,
-    ApplyReport, DoctorReport, HermesAdapter, HermesProfilePreset, HermesSettings, ProbeStatus,
-    ProfilesDocument, RepairExecuteOptions, RepairExecuteReport, RuntimeModelPreset,
-    RuntimeProbeReport, UseProfileReport,
+    apply_profile_model, build_repair_preview_from_bundle, execute_repair, list_runtime_backup_ids,
+    load_profiles, probe_runtime, restore_runtime_backup, run_doctor, set_runtime_model,
+    suggest_runtime_repairs, use_profile, ApplyReport, DoctorReport, HermesAdapter,
+    HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument, RepairExecuteOptions,
+    RepairExecuteReport, RestoreReport, RuntimeModelPreset, RuntimeProbeReport, UseProfileReport,
 };
 use serde::Serialize;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{Emitter, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -108,6 +109,23 @@ fn run_repair_execute_command(runtime: String) -> Result<RepairPreviewResponse, 
     ))
 }
 
+#[tauri::command]
+fn run_repair_rollback_command(
+    runtime: String,
+    backup: Option<String>,
+) -> Result<RestoreSummary, String> {
+    let report =
+        restore_runtime_backup(&runtime, backup.as_deref()).map_err(|error| error.to_string())?;
+    Ok(RestoreSummary::from(&report))
+}
+
+#[tauri::command]
+fn open_path_command(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 fn build_repair_preview_response(
     report: RuntimeProbeReport,
     last_execute: Option<RepairExecuteSummary>,
@@ -116,6 +134,7 @@ fn build_repair_preview_response(
     let suggested = suggest_runtime_repairs(&report.runtime_id, &report);
     let can_apply_repair =
         report.runtime_id == "hermes" || suggested.iter().any(|item| item.auto_fixable);
+    let backup_ids = list_runtime_backup_ids(&report.runtime_id).unwrap_or_default();
     let mut summary = RepairPreviewSummary::default();
     let checks = report
         .checks
@@ -153,6 +172,7 @@ fn build_repair_preview_response(
             })
             .collect(),
         can_apply_repair,
+        backup_ids,
         last_execute,
     }
 }
@@ -190,16 +210,19 @@ struct SkippedRepairItem {
 
 #[derive(Debug, Serialize)]
 struct RepairExecuteSummary {
+    backup_id: String,
     backup_root: String,
     executed: Vec<String>,
     skipped: Vec<SkippedRepairItem>,
     verification_summary: String,
     rollback_hint: String,
+    guide_path: Option<String>,
 }
 
 impl From<&RepairExecuteReport> for RepairExecuteSummary {
     fn from(report: &RepairExecuteReport) -> Self {
         Self {
+            backup_id: report.backup.id.clone(),
             backup_root: report.backup.root.clone(),
             executed: report.executed_action_ids.clone(),
             skipped: report
@@ -212,6 +235,24 @@ impl From<&RepairExecuteReport> for RepairExecuteSummary {
                 .collect(),
             verification_summary: report.audit.verification_summary.clone(),
             rollback_hint: report.audit.rollback_hint.clone(),
+            guide_path: report.guide_path.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RestoreSummary {
+    backup_id: String,
+    backup_root: String,
+    restored_files: Vec<String>,
+}
+
+impl From<&RestoreReport> for RestoreSummary {
+    fn from(report: &RestoreReport) -> Self {
+        Self {
+            backup_id: report.backup_id.clone(),
+            backup_root: report.backup_root.clone(),
+            restored_files: report.restored_files.clone(),
         }
     }
 }
@@ -225,6 +266,7 @@ struct RepairPreviewResponse {
     plan_summary: String,
     suggested_repairs: Vec<SuggestedRepairItem>,
     can_apply_repair: bool,
+    backup_ids: Vec<String>,
     last_execute: Option<RepairExecuteSummary>,
 }
 
@@ -291,7 +333,9 @@ pub fn run() {
             set_hermes_model_command,
             apply_profile_model_command,
             run_repair_preview_command,
-            run_repair_execute_command
+            run_repair_execute_command,
+            run_repair_rollback_command,
+            open_path_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
 
 use crate::adapters::util::home_join;
+use crate::adapters::HermesAdapter;
 use crate::presets::{load_profiles, HermesProfilePreset};
 use crate::probe::{ProbeStatus, RuntimeProbeReport};
 use crate::repair::{SkippedRepairAction, SuggestedRepair};
@@ -13,6 +14,8 @@ use crate::repair::{SkippedRepairAction, SuggestedRepair};
 pub struct PlaybookApplyResult {
     pub executed: Vec<String>,
     pub skipped: Vec<SkippedRepairAction>,
+    /// When API key scaffold is created, path to the generated guide document.
+    pub guide_path: Option<PathBuf>,
 }
 
 pub fn suggest_hermes_repairs(probe: &RuntimeProbeReport) -> Vec<SuggestedRepair> {
@@ -56,11 +59,18 @@ pub fn suggest_hermes_repairs(probe: &RuntimeProbeReport) -> Vec<SuggestedRepair
         }
 
         if check.id == "hermes.api_key.configured" && check.status == ProbeStatus::Warn {
+            let can_scaffold = hermes_api_key_env_var(probe).is_some();
             items.push(SuggestedRepair {
-                id: "fix-hermes-api-key-manual".to_string(),
-                title: "Configure API key in ~/.hermes/.env".to_string(),
-                description: check.message.clone(),
-                auto_fixable: false,
+                id: "fix-hermes-api-key-scaffold".to_string(),
+                title: "Prepare ~/.hermes/.env for API key".to_string(),
+                description: if can_scaffold {
+                    "Create .env placeholder and open a local setup guide (secret is not auto-filled)."
+                        .to_string()
+                } else {
+                    "Set model.provider in config.yaml so Agent Doctor knows which env var to use."
+                        .to_string()
+                },
+                auto_fixable: can_scaffold,
             });
         }
     }
@@ -113,7 +123,136 @@ pub fn apply_hermes_playbook(probe: &RuntimeProbeReport) -> Result<PlaybookApply
         }
     }
 
+    if needs_api_key_scaffold(probe) {
+        match prepare_api_key_env_scaffold(probe) {
+            Ok(guide_path) => {
+                result
+                    .executed
+                    .push("fix-hermes-api-key-scaffold".to_string());
+                result.guide_path = Some(guide_path);
+            }
+            Err(error) => result.skipped.push(SkippedRepairAction {
+                id: "fix-hermes-api-key-scaffold".to_string(),
+                reason: error.to_string(),
+            }),
+        }
+    }
+
     Ok(result)
+}
+
+fn needs_api_key_scaffold(probe: &RuntimeProbeReport) -> bool {
+    probe
+        .checks
+        .iter()
+        .any(|check| check.id == "hermes.api_key.configured" && check.status == ProbeStatus::Warn)
+}
+
+fn hermes_api_key_env_var(probe: &RuntimeProbeReport) -> Option<String> {
+    probe
+        .facts
+        .iter()
+        .find(|fact| fact.key == "hermes.api_key.env")
+        .map(|fact| fact.value.clone())
+        .or_else(|| {
+            probe
+                .facts
+                .iter()
+                .find(|fact| fact.key == "hermes.provider")
+                .and_then(|fact| HermesAdapter::provider_api_key_env(&fact.value))
+        })
+}
+
+fn hermes_provider_name(probe: &RuntimeProbeReport) -> String {
+    probe
+        .facts
+        .iter()
+        .find(|fact| fact.key == "hermes.provider")
+        .map(|fact| fact.value.clone())
+        .unwrap_or_else(|| "your provider".to_string())
+}
+
+fn prepare_api_key_env_scaffold(probe: &RuntimeProbeReport) -> Result<PathBuf> {
+    let env_var = hermes_api_key_env_var(probe)
+        .context("could not determine API key env var — set model.provider in config.yaml")?;
+    let provider = hermes_provider_name(probe);
+    let env_path = hermes_env_path();
+    let guide_path = api_key_guide_path(&env_var)?;
+
+    if let Some(parent) = env_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if !env_path.exists() {
+        let scaffold = format!(
+            "# Agent Doctor scaffold — paste your API key after the equals sign.\n\
+             # Secrets are never auto-filled. Delete this comment block after setup.\n\
+             # Provider: {provider}\n\
+             {env_var}=\n"
+        );
+        fs::write(&env_path, scaffold)
+            .with_context(|| format!("failed to create {}", env_path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&env_path, fs::Permissions::from_mode(0o600))?;
+        }
+    } else {
+        let raw = fs::read_to_string(&env_path)?;
+        if !raw
+            .lines()
+            .any(|line| line.starts_with(&format!("{env_var}=")))
+        {
+            let mut updated = raw;
+            if !updated.ends_with('\n') {
+                updated.push('\n');
+            }
+            updated.push_str(&format!("{env_var}=\n"));
+            fs::write(&env_path, updated)?;
+        }
+    }
+
+    let key_url = provider_api_key_url(&provider);
+    let guide = format!(
+        "# Hermes API key setup\n\n\
+         Agent Doctor created a placeholder in `~/.hermes/.env`.\n\n\
+         ## Steps\n\n\
+         1. Open `~/.hermes/.env`.\n\
+         2. Set `{env_var}=your_api_key_here` (no quotes needed).\n\
+         3. Run `agent-doctor repair hermes` again to verify.\n\n\
+         ## Provider\n\n\
+         - Name: **{provider}**\n\
+         - Env var: `{env_var}`\n\
+         - Key URL: {key_url}\n\n\
+         Secrets stay on this machine. Agent Doctor does not upload API keys.\n"
+    );
+    if let Some(parent) = guide_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&guide_path, guide)?;
+
+    Ok(guide_path)
+}
+
+fn api_key_guide_path(env_var: &str) -> Result<PathBuf> {
+    let root = dirs::config_dir()
+        .map(|dir| dir.join("agent-doctor").join("guides"))
+        .context("could not resolve config directory")?;
+    Ok(root.join(format!("hermes-api-key-{env_var}.md")))
+}
+
+fn provider_api_key_url(provider: &str) -> &'static str {
+    match provider.trim().to_lowercase().as_str() {
+        "deepseek" => "https://platform.deepseek.com/api_keys",
+        "openai" => "https://platform.openai.com/api-keys",
+        "anthropic" => "https://console.anthropic.com/settings/keys",
+        "openrouter" => "https://openrouter.ai/keys",
+        "google" | "gemini" => "https://aistudio.google.com/apikey",
+        "groq" => "https://console.groq.com/keys",
+        "together" => "https://api.together.ai/settings/api-keys",
+        "mistral" => "https://console.mistral.ai/api-keys/",
+        _ => "your provider's developer console",
+    }
 }
 
 fn hermes_config_path() -> PathBuf {

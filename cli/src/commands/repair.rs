@@ -1,10 +1,20 @@
 use agent_doctor_core::{
-    build_repair_preview_from_bundle, execute_repair, probe_health_summary, probe_runtime,
-    ProbeStatus, RepairExecuteOptions, RepairRisk,
+    build_repair_preview_from_bundle, execute_repair, list_runtime_backup_ids,
+    probe_health_summary, probe_runtime, restore_runtime_backup, ProbeStatus, RepairExecuteOptions,
+    RepairRisk,
 };
 use anyhow::Result;
 
-pub fn run(runtime: &str, apply: bool, json: bool) -> Result<()> {
+pub fn run(
+    runtime: &str,
+    apply: bool,
+    rollback: bool,
+    backup: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    if rollback {
+        return run_rollback(runtime, backup, json);
+    }
     if apply {
         return run_execute(runtime, json);
     }
@@ -18,6 +28,17 @@ fn run_preview(runtime: &str) -> Result<()> {
     println!("Agent Doctor — runtime probe and safe repair preview\n");
     println!("Runtime: {}", plan.runtime_id);
     println!("Summary: {}\n", plan.summary);
+
+    if runtime == "hermes" {
+        let backups = list_runtime_backup_ids(runtime)?;
+        if !backups.is_empty() {
+            println!("Recent backups (for --rollback):");
+            for id in backups.iter().take(5) {
+                println!("  - {id}");
+            }
+            println!();
+        }
+    }
 
     println!("Rule-based probe checks:");
     for check in &report.checks {
@@ -58,8 +79,9 @@ fn run_preview(runtime: &str) -> Result<()> {
     }
 
     println!(
-        "\nNo files were modified. Run with --apply to execute backup, typed actions, verification, and audit."
+        "\nNo files were modified. Run with --apply to execute backup, rule fixes, verification, and audit."
     );
+    println!("Rollback: agent-doctor repair {runtime} --rollback [--backup <id>]");
     Ok(())
 }
 
@@ -111,9 +133,35 @@ fn run_execute(runtime: &str, json: bool) -> Result<()> {
         }
     }
 
+    if let Some(guide) = &report.guide_path {
+        println!("\nAPI key guide: {guide}");
+        println!("  Open this file for setup steps. Secrets are not auto-filled.");
+    }
+
     println!("\nAudit: {}", report.audit.id);
     println!("  verification: {}", report.audit.verification_summary);
-    println!("  rollback: {}", report.audit.rollback_hint);
+    println!(
+        "  rollback: agent-doctor repair {runtime} --rollback --backup {}",
+        report.backup.id
+    );
+    Ok(())
+}
+
+fn run_rollback(runtime: &str, backup: Option<&str>, json: bool) -> Result<()> {
+    let report = restore_runtime_backup(runtime, backup)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!("Agent Doctor — restore from backup\n");
+    println!("Runtime: {}", report.runtime_id);
+    println!("Backup: {} ({})", report.backup_id, report.backup_root);
+    println!("\nRestored files:");
+    for path in &report.restored_files {
+        println!("  - {path}");
+    }
     Ok(())
 }
 
