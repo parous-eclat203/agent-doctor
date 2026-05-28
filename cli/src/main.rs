@@ -37,9 +37,15 @@ enum Commands {
         /// Runtime id (e.g. openclaw, hermes, claude-code, codex)
         runtime: String,
         /// Execute backup, typed actions, re-probe verification, and write audit metadata
-        #[arg(long)]
+        #[arg(long, conflicts_with = "rollback")]
         apply: bool,
-        /// Emit JSON (only with --apply)
+        /// Restore config files from a backup snapshot (latest, or --backup id)
+        #[arg(long, conflicts_with = "apply")]
+        rollback: bool,
+        /// Backup id to restore (with --rollback); default is latest for this runtime
+        #[arg(long, requires = "rollback")]
+        backup: Option<String>,
+        /// Emit JSON (with --apply or --rollback)
         #[arg(long)]
         json: bool,
     },
@@ -121,8 +127,10 @@ fn main() -> Result<()> {
         Commands::Repair {
             runtime,
             apply,
+            rollback,
+            backup,
             json,
-        } => commands::repair::run(&runtime, apply, json)?,
+        } => commands::repair::run(&runtime, apply, rollback, backup.as_deref(), json)?,
         Commands::Setup { url, key } => commands::setup::run(&url, &key)?,
         Commands::Sync => commands::sync::run()?,
         Commands::Policy { action } => match action {

@@ -1072,13 +1072,31 @@ body::before {
 
 .repair-panel-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 8px;
 }
 
-.repair-apply-btn {
+.repair-apply-btn,
+.repair-rollback-btn {
   font-size: 0.68rem;
   padding: 5px 10px;
+}
+
+.repair-guide {
+  margin: 0.35rem 0 0;
+}
+
+.repair-guide-btn {
+  padding: 0;
+  font-size: inherit;
+}
+
+.repair-rollback-ok {
+  margin: 0 0 0.75rem;
+  color: var(--ok, #3d9a5a);
+  font-size: 0.85rem;
 }
 
 .repair-execute-result {

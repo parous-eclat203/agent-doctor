@@ -1,14 +1,19 @@
 mod execute;
 mod playbooks;
+mod restore;
 mod suggested;
 
 use serde::{Deserialize, Serialize};
 
 pub use execute::{
-    execute_repair, probe_health_summary, RepairExecuteOptions, RepairExecuteReport,
+    backups_root, execute_repair, probe_health_summary, RepairExecuteOptions, RepairExecuteReport,
     SkippedRepairAction,
 };
 pub use playbooks::{suggest_hermes_repairs, suggest_runtime_repairs};
+pub use restore::{
+    list_runtime_backup_ids, load_backup_snapshot, restore_backup_snapshot, restore_runtime_backup,
+    RestoreReport,
+};
 pub use suggested::SuggestedRepair;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

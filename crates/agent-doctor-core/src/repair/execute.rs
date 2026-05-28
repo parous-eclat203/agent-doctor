@@ -35,6 +35,8 @@ pub struct RepairExecuteReport {
     pub executed_action_ids: Vec<String>,
     pub skipped_actions: Vec<SkippedRepairAction>,
     pub audit: AuditReport,
+    /// Local guide document when API key scaffold was created.
+    pub guide_path: Option<String>,
 }
 
 /// Run the repair pipeline: probe → plan → backup → apply actions → re-probe → audit.
@@ -49,8 +51,10 @@ pub fn execute_repair(
     let mut executed_action_ids = vec!["backup-runtime-configs".to_string()];
     let mut skipped_actions = Vec::new();
 
+    let mut guide_path = None;
     if options.apply_confirmed_writes && runtime_id == "hermes" {
         let playbook = apply_hermes_playbook(&before_probe)?;
+        guide_path = playbook.guide_path.map(|path| path.display().to_string());
         executed_action_ids.extend(playbook.executed);
         skipped_actions.extend(playbook.skipped);
     }
@@ -87,6 +91,7 @@ pub fn execute_repair(
         executed_action_ids,
         skipped_actions,
         audit,
+        guide_path,
     })
 }
 

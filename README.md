@@ -7,9 +7,11 @@ Agent Doctor discovers OpenClaw, Hermes, Claude Code, Codex, and related runtime
 Use it standalone on a developer laptop, or connect an enterprise control plane when your team needs shared gateways, skills, and policy.
 
 ```bash
-agent-doctor doctor                    # Diagnose: installed runtimes, config paths, gateway wiring
-agent-doctor repair hermes             # Repair: deep checks + safe repair preview (execution rolling out)
-agent-doctor setup --url ... --key ... # Onboard: apply company profile to runtimes (planned)
+agent-doctor doctor                              # Diagnose: installed runtimes, config paths, gateway wiring
+agent-doctor repair hermes                       # Repair: probes + safe preview (no writes)
+agent-doctor repair hermes --apply               # Backup, Hermes rule fixes, re-probe, audit
+agent-doctor repair hermes --rollback            # Restore latest backup (or --backup <id>)
+agent-doctor setup --url ... --key ...           # Onboard: apply company profile (planned)
 ```
 
 [License: MIT](LICENSE) · [Roadmap](docs/ROADMAP.md) · [Repair safety](docs/repair-safety.md)
@@ -31,7 +33,9 @@ See [docs/enterprise.md](docs/enterprise.md).
 
 ## Status
 
-🚧 **Early MVP** — `agent-doctor doctor`, read-only `repair` probes, and a Tauri menubar shell. P0 next: `repair` execution and `setup`. See [docs/ROADMAP.md](docs/ROADMAP.md).
+🚧 **Early MVP** — `doctor`, Hermes-focused `repair --apply` (rule fixes + backup + rollback), and a Tauri menubar shell. **Not yet:** `setup`, enterprise `sync`/`policy`, OpenClaw/Codex playbooks, AI auto-repair, or auto-filling API keys. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+**Hermes repair today:** backup configs; tighten `.env` permissions; dedupe API key env vars; fill model fields from your active profile; when the key is missing, create a `.env` placeholder and a local setup guide (you paste the secret). **Rollback:** `repair hermes --rollback` or the desktop **Rollback from backup** button.
 
 Diagnostic data is classified by sensitivity; secrets are redacted before AI analysis. Real writes require typed actions, backups, and confirmation — [docs/repair-safety.md](docs/repair-safety.md).
 
@@ -89,9 +93,11 @@ Each runtime has its own install path, gateway settings, skills manifest, policy
 **Agent Doctor** 在本机 **诊断、修复、就位** AI Agent Runtime（OpenClaw、Hermes、Claude Code、Codex 等）。
 
 ```bash
-agent-doctor doctor                    # 诊断
-agent-doctor repair hermes             # 修复（深度检查 + 安全预览，执行能力逐步开放）
-agent-doctor setup --url ... --key ... # 就位（规划中）
+agent-doctor doctor                              # 诊断
+agent-doctor repair hermes                       # 修复预览（不写文件）
+agent-doctor repair hermes --apply               # 备份 + Hermes 规则修复 + 复检
+agent-doctor repair hermes --rollback            # 从备份恢复
+agent-doctor setup --url ... --key ...           # 就位（规划中）
 ```
 
 企业可选：`sync`、`policy pull` — 见 [docs/enterprise.md](docs/enterprise.md)。完整中文说明：[docs/zh-CN/README.md](docs/zh-CN/README.md)。

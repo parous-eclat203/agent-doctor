@@ -83,14 +83,23 @@ interface RepairPreviewResponse {
     auto_fixable: boolean;
   }>;
   can_apply_repair: boolean;
+  backup_ids: string[];
   last_execute: {
+    backup_id: string;
     backup_root: string;
     executed: string[];
     skipped: Array<{ id: string; reason: string }>;
     verification_summary: string;
     rollback_hint: string;
+    guide_path: string | null;
   } | null;
 }
+
+type RestoreSummary = {
+  backup_id: string;
+  backup_root: string;
+  restored_files: string[];
+};
 
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const runtimesEl = document.querySelector<HTMLElement>("#runtimes")!;
@@ -554,6 +563,11 @@ function renderRepairPreview(
     ? `<button type="button" class="btn-secondary repair-apply-btn" data-action="apply-repair">${t("repair.applyFixes")}</button>`
     : "";
 
+  const rollbackButton =
+    report.backup_ids.length > 0
+      ? `<button type="button" class="btn-secondary repair-rollback-btn" data-action="rollback-repair">${t("repair.rollback")}</button>`
+      : "";
+
   const executeResult = report.last_execute
     ? renderRepairExecuteResult(report.last_execute)
     : "";
@@ -573,7 +587,7 @@ function renderRepairPreview(
       </div>
       <ul class="repair-checks">${checks}${emptyList}</ul>
       ${suggested}
-      <div class="repair-panel-actions">${applyButton}</div>
+      <div class="repair-panel-actions">${applyButton}${rollbackButton}</div>
       ${executeResult}
       ${planLine}
     </div>
@@ -584,6 +598,7 @@ const REPAIR_FIX_LABEL_KEYS: Record<string, string> = {
   "backup-runtime-configs": "repair.fix.backup",
   "fix-hermes-env-permissions": "repair.fix.envPermissions",
   "fix-hermes-api-key-duplicates": "repair.fix.apiKeyDedupe",
+  "fix-hermes-api-key-scaffold": "repair.fix.apiKeyScaffold",
   "fix-hermes-config-from-profile": "repair.fix.configFromProfile",
 };
 
@@ -619,6 +634,10 @@ function renderRepairExecuteResult(
 
   const verify = formatVerificationSummary(execute.verification_summary);
 
+  const guideBlock = execute.guide_path
+    ? `<p class="repair-guide"><button type="button" class="btn-link repair-guide-btn" data-action="open-repair-guide" data-guide-path="${encodeURIComponent(execute.guide_path)}">${escapeHtml(t("repair.openGuide"))}</button></p>`
+    : "";
+
   return `
     <div class="repair-execute-result">
       ${
@@ -629,6 +648,7 @@ function renderRepairExecuteResult(
       ${outcome}
       ${executedBlock}
       ${skippedBlock}
+      ${guideBlock}
       <p class="repair-verify"><strong>${escapeHtml(t("repair.verifyTitle"))}:</strong> ${escapeHtml(verify)}</p>
     </div>
   `;
@@ -1109,6 +1129,50 @@ async function applyPreset() {
   }
 }
 
+async function rollbackRepairRuntimeCard(card: HTMLElement) {
+  const runtime = card.dataset.runtime;
+  const hint = card.querySelector<HTMLElement>("[data-repair-hint]");
+  const diagnoseButton = card.querySelector<HTMLButtonElement>('[data-action="diagnose-runtime"]');
+  const applyButton = card.querySelector<HTMLButtonElement>('[data-action="apply-repair"]');
+  const rollbackButton = card.querySelector<HTMLButtonElement>('[data-action="rollback-repair"]');
+  if (!runtime || !hint) {
+    return;
+  }
+  diagnoseButton?.setAttribute("disabled", "true");
+  applyButton?.setAttribute("disabled", "true");
+  rollbackButton?.setAttribute("disabled", "true");
+  hint.hidden = false;
+  hint.textContent = t("repair.rollingBack");
+  try {
+    const restore = await invoke<RestoreSummary>("run_repair_rollback_command", {
+      runtime,
+      backup: null,
+    });
+    const report = await invoke<RepairPreviewResponse>("run_repair_preview_command", { runtime });
+    repairFilterByRuntime.set(runtime, "all");
+    mountRepairPreview(hint, report);
+    hint.insertAdjacentHTML(
+      "afterbegin",
+      `<p class="repair-rollback-ok">${escapeHtml(
+        t("repair.rollbackDone", { id: restore.backup_id, count: String(restore.restored_files.length) }),
+      )}</p>`,
+    );
+    if (runtime === "hermes") {
+      await loadHermesModel();
+    }
+  } catch (error) {
+    hint.textContent = String(error);
+  } finally {
+    diagnoseButton?.removeAttribute("disabled");
+    applyButton?.removeAttribute("disabled");
+    rollbackButton?.removeAttribute("disabled");
+  }
+}
+
+async function openRepairGuide(path: string) {
+  await invoke("open_path_command", { path });
+}
+
 async function applyRepairRuntimeCard(card: HTMLElement) {
   const runtime = card.dataset.runtime;
   const hint = card.querySelector<HTMLElement>("[data-repair-hint]");
@@ -1250,6 +1314,17 @@ runtimesEl.addEventListener("click", (event) => {
 
   if (action === "apply-repair" && runtimeCard) {
     void applyRepairRuntimeCard(runtimeCard);
+    return;
+  }
+
+  if (action === "rollback-repair" && runtimeCard) {
+    void rollbackRepairRuntimeCard(runtimeCard);
+    return;
+  }
+
+  const guideBtn = target.closest<HTMLButtonElement>('[data-action="open-repair-guide"]');
+  if (guideBtn?.dataset.guidePath) {
+    void openRepairGuide(decodeURIComponent(guideBtn.dataset.guidePath));
     return;
   }
 
