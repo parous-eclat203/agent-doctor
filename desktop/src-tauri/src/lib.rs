@@ -1,9 +1,10 @@
 use agent_doctor_core::{
     apply_profile_model, build_repair_preview_from_bundle, execute_repair, list_runtime_backup_ids,
-    load_profiles, probe_runtime, restore_runtime_backup, run_doctor, set_runtime_model,
-    suggest_runtime_repairs, use_profile, ApplyReport, DoctorReport, HermesAdapter,
-    HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument, RepairExecuteOptions,
-    RepairExecuteReport, RestoreReport, RuntimeModelPreset, RuntimeProbeReport, UseProfileReport,
+    load_profiles, probe_runtime, restore_runtime_backup, run_doctor, runtime_supports_playbook,
+    set_runtime_model, suggest_runtime_repairs, use_profile, ApplyReport, DoctorReport,
+    HermesAdapter, HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument,
+    RepairExecuteOptions, RepairExecuteReport, RestoreReport, RuntimeModelPreset,
+    RuntimeProbeReport, UseProfileReport,
 };
 use serde::Serialize;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -132,8 +133,8 @@ fn build_repair_preview_response(
 ) -> RepairPreviewResponse {
     let plan = build_repair_preview_from_bundle(report.to_diagnostic_bundle());
     let suggested = suggest_runtime_repairs(&report.runtime_id, &report);
-    let can_apply_repair =
-        report.runtime_id == "hermes" || suggested.iter().any(|item| item.auto_fixable);
+    let can_apply_repair = runtime_supports_playbook(&report.runtime_id)
+        || suggested.iter().any(|item| item.auto_fixable);
     let backup_ids = list_runtime_backup_ids(&report.runtime_id).unwrap_or_default();
     let mut summary = RepairPreviewSummary::default();
     let checks = report

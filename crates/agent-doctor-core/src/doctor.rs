@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::adapter::RuntimeProfile;
-use crate::adapters::all_adapters;
 use crate::presets::load_profiles;
 use crate::profile::agent_profile_path;
+use crate::runtime::all_adapters;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeDoctorResult {
