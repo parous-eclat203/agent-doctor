@@ -164,9 +164,10 @@ pub fn apply_hermes_playbook(probe: &RuntimeProbeReport) -> Result<PlaybookApply
 }
 
 fn hermes_needs_install(probe: &RuntimeProbeReport) -> bool {
-    probe.checks.iter().any(|check| {
-        check.id == "binary.exists" && check.status == ProbeStatus::Fail
-    })
+    probe
+        .checks
+        .iter()
+        .any(|check| check.id == "binary.exists" && check.status == ProbeStatus::Fail)
 }
 
 fn needs_api_key_scaffold(probe: &RuntimeProbeReport) -> bool {

@@ -1,9 +1,10 @@
 use agent_doctor_core::{
     apply_profile_model, build_repair_preview_from_bundle, execute_repair, list_runtime_backup_ids,
     load_profiles, probe_runtime, restore_runtime_backup, run_doctor, runtime_supports_playbook,
-    set_runtime_model, suggest_runtime_repairs, use_profile, ApplyReport, DoctorReport, HermesAdapter,
-    HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument, RepairExecuteOptions,
-    RepairExecuteReport, RestoreReport, RuntimeModelPreset, RuntimeProbeReport, UseProfileReport,
+    set_runtime_model, suggest_runtime_repairs, use_profile, ApplyReport, DoctorReport,
+    HermesAdapter, HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument,
+    RepairExecuteOptions, RepairExecuteReport, RestoreReport, RuntimeModelPreset,
+    RuntimeProbeReport, UseProfileReport,
 };
 use serde::Serialize;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};

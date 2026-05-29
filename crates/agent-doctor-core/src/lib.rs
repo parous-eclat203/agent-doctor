@@ -13,7 +13,6 @@ pub use adapter::{
     RuntimeProfile,
 };
 pub use adapters::{CodexAdapter, HermesAdapter, HermesSettings, OpenClawAdapter};
-pub use runtime::{adapter_by_id, all_adapters};
 pub use doctor::{run_doctor, DoctorReport, RuntimeDoctorResult};
 pub use lifecycle::{hermes_shell_command, run_hermes_lifecycle, HermesLifecycleAction};
 pub use presets::{
@@ -33,6 +32,7 @@ pub use repair::{
     RepairExecuteReport, RepairPlan, RepairRisk, RestoreReport, SensitivityLevel,
     SkippedRepairAction, SnapshotFile, SuggestedRepair,
 };
+pub use runtime::{adapter_by_id, all_adapters};
 pub use runtime::{
     all_runtime_ids, apply_runtime_playbook, descriptor_by_id, run_runtime_lifecycle,
     runtime_supports_lifecycle, runtime_supports_playbook, suggest_runtime_repairs,

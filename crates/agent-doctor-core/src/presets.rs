@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::adapter::{ApplyReport, RuntimeModelPreset};
-use crate::adapters::{HermesAdapter};
+use crate::adapters::HermesAdapter;
 use crate::runtime::{adapter_by_id, all_adapters};
 
 const PROFILES_FILE: &str = "profiles.yaml";

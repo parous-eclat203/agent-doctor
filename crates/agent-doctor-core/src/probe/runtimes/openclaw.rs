@@ -4,7 +4,7 @@ use crate::repair::{DiagnosticFact, SensitivityLevel};
 
 use super::super::config::ParsedConfig;
 use super::super::schema::{schema_error, schema_warn};
-use super::super::{ProbeCheck};
+use super::super::ProbeCheck;
 
 pub(crate) fn probe_schema(
     path: &Path,

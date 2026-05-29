@@ -111,10 +111,7 @@ fn finish_lifecycle_output(output: &Output) -> Result<()> {
     };
     let detail = last_lines(raw, 8);
     if detail.is_empty() {
-        bail!(
-            "installer exited with status {:?}",
-            output.status.code()
-        );
+        bail!("installer exited with status {:?}", output.status.code());
     }
     bail!("{detail}");
 }

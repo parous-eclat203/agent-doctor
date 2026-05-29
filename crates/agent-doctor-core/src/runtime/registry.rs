@@ -5,12 +5,14 @@ use anyhow::{Context, Result};
 use crate::adapter::RuntimeAdapter;
 use crate::adapters::{ClaudeCodeAdapter, CodexAdapter, HermesAdapter, OpenClawAdapter};
 use crate::lifecycle::{run_hermes_lifecycle, HermesLifecycleAction};
-use crate::probe::ParsedConfig;
 use crate::probe::runtimes::{
     probe_deep, schema_claude_code, schema_codex, schema_hermes, schema_openclaw,
 };
+use crate::probe::ParsedConfig;
 use crate::probe::{ProbeCheck, RuntimeProbeReport};
-use crate::repair::{apply_hermes_playbook, suggest_hermes_repairs, PlaybookApplyResult, SuggestedRepair};
+use crate::repair::{
+    apply_hermes_playbook, suggest_hermes_repairs, PlaybookApplyResult, SuggestedRepair,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigFormat {
@@ -35,12 +37,7 @@ pub enum RuntimeLifecycleAction {
 
 type AdapterFactory = fn() -> Box<dyn RuntimeAdapter>;
 type DeepProbeFn = fn(&mut Vec<ProbeCheck>, &mut Vec<DiagnosticFact>);
-type SchemaProbeFn = fn(
-    &Path,
-    &ParsedConfig,
-    &mut Vec<ProbeCheck>,
-    &mut Vec<DiagnosticFact>,
-);
+type SchemaProbeFn = fn(&Path, &ParsedConfig, &mut Vec<ProbeCheck>, &mut Vec<DiagnosticFact>);
 type SuggestRepairsFn = fn(&RuntimeProbeReport) -> Vec<SuggestedRepair>;
 type ApplyPlaybookFn = fn(&RuntimeProbeReport) -> Result<PlaybookApplyResult>;
 type RunLifecycleFn = fn(RuntimeLifecycleAction) -> Result<()>;
@@ -180,9 +177,7 @@ pub fn all_runtime_ids() -> impl Iterator<Item = &'static str> {
 }
 
 pub fn descriptor_by_id(runtime_id: &str) -> Option<&'static RuntimeDescriptor> {
-    RUNTIME_REGISTRY
-        .iter()
-        .find(|entry| entry.id == runtime_id)
+    RUNTIME_REGISTRY.iter().find(|entry| entry.id == runtime_id)
 }
 
 pub fn all_adapters() -> Vec<Box<dyn RuntimeAdapter>> {
@@ -216,10 +211,7 @@ pub fn apply_runtime_playbook(
     apply(probe)
 }
 
-pub fn run_runtime_lifecycle(
-    runtime_id: &str,
-    action: RuntimeLifecycleAction,
-) -> Result<()> {
+pub fn run_runtime_lifecycle(runtime_id: &str, action: RuntimeLifecycleAction) -> Result<()> {
     let run = descriptor_by_id(runtime_id)
         .and_then(|entry| entry.run_lifecycle)
         .with_context(|| format!("runtime '{runtime_id}' has no install/update hooks"))?;
@@ -227,13 +219,11 @@ pub fn run_runtime_lifecycle(
 }
 
 pub fn runtime_supports_playbook(runtime_id: &str) -> bool {
-    descriptor_by_id(runtime_id)
-        .is_some_and(|entry| entry.apply_playbook.is_some())
+    descriptor_by_id(runtime_id).is_some_and(|entry| entry.apply_playbook.is_some())
 }
 
 pub fn runtime_supports_lifecycle(runtime_id: &str) -> bool {
-    descriptor_by_id(runtime_id)
-        .is_some_and(|entry| entry.run_lifecycle.is_some())
+    descriptor_by_id(runtime_id).is_some_and(|entry| entry.run_lifecycle.is_some())
 }
 
 #[cfg(test)]
@@ -243,10 +233,7 @@ mod tests {
     #[test]
     fn registry_has_unique_ids_in_stable_order() {
         let ids: Vec<_> = RUNTIME_REGISTRY.iter().map(|entry| entry.id).collect();
-        assert_eq!(
-            ids,
-            vec!["openclaw", "hermes", "claude-code", "codex"]
-        );
+        assert_eq!(ids, vec!["openclaw", "hermes", "claude-code", "codex"]);
         let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
         assert_eq!(unique.len(), ids.len());
     }
