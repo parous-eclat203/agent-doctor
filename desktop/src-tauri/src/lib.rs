@@ -2,10 +2,12 @@ use agent_doctor_core::{
     apply_profile_model, build_repair_preview_from_bundle, execute_repair, list_runtime_backup_ids,
     load_profiles, load_workspaces, probe_runtime, restore_runtime_backup, run_doctor,
     runtime_supports_playbook, set_runtime_model, suggest_runtime_repairs, use_profile,
-    use_workspace_with_options, workspace_status, ApplyReport, DoctorReport, HermesAdapter,
-    HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument, RepairExecuteOptions,
-    RepairExecuteReport, RestoreReport, RuntimeModelPreset, RuntimeProbeReport, UseProfileReport,
-    UseWorkspaceOptions, UseWorkspaceReport, WorkspaceStatusReport, WorkspacesDocument,
+    use_workspace_with_options, workspace_doctor, workspace_fix, workspace_status, ApplyReport,
+    DoctorReport, HermesAdapter, HermesProfilePreset, HermesSettings, ProbeStatus, ProfilesDocument,
+    RepairExecuteOptions, RepairExecuteReport, RestoreReport, RuntimeModelPreset,
+    RuntimeProbeReport, UseProfileReport, UseWorkspaceOptions, UseWorkspaceReport,
+    WorkspaceDoctorReport, WorkspaceFixOptions, WorkspaceFixReport, WorkspaceStatusReport,
+    WorkspacesDocument,
 };
 use serde::Serialize;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -33,20 +35,116 @@ fn list_workspaces_command() -> WorkspacesDocument {
 }
 
 #[tauri::command]
-fn use_workspace_command(name: String) -> Result<UseWorkspaceReport, String> {
-    use_workspace_with_options(
+fn use_workspace_command(name: String, app: tauri::AppHandle) -> Result<UseWorkspaceReport, String> {
+    let report = use_workspace_with_options(
         &name,
         &UseWorkspaceOptions {
             backup: true,
             restart_gateways: false,
         },
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    update_tray_tooltip(&app);
+    rebuild_tray_menu(&app);
+    Ok(report)
 }
 
 #[tauri::command]
 fn workspace_status_command() -> Result<WorkspaceStatusReport, String> {
     workspace_status(None).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn workspace_doctor_command() -> Result<WorkspaceDoctorReport, String> {
+    workspace_doctor().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn workspace_fix_command(migrate_claude_mcp: bool) -> Result<WorkspaceFixReport, String> {
+    workspace_fix(&WorkspaceFixOptions {
+        dry_run: false,
+        restart_gateways: false,
+        migrate_claude_mcp,
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{IsMenuItem, Menu, MenuItem, Submenu};
+
+    let doc = load_workspaces().unwrap_or_default();
+    let show = MenuItem::with_id(app, "show", "Show Agent Doctor", true, None::<&str>)?;
+    let ws_doctor =
+        MenuItem::with_id(app, "workspace_doctor", "Workspace check", true, None::<&str>)?;
+    let doctor = MenuItem::with_id(app, "doctor", "Run doctor", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+    let mut switch_items: Vec<MenuItem<tauri::Wry>> = Vec::new();
+    for name in doc.workspaces.keys() {
+        let label = if doc.active.as_deref() == Some(name.as_str()) {
+            format!("✓ {name}")
+        } else {
+            name.clone()
+        };
+        switch_items.push(MenuItem::with_id(
+            app,
+            format!("workspace:{name}"),
+            &label,
+            true,
+            None::<&str>,
+        )?);
+    }
+
+    let none_item =
+        MenuItem::with_id(app, "workspace:none", "(no workspaces)", false, None::<&str>)?;
+    let switch_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = if switch_items.is_empty() {
+        vec![&none_item as &dyn IsMenuItem<tauri::Wry>]
+    } else {
+        switch_items
+            .iter()
+            .map(|item| item as &dyn IsMenuItem<tauri::Wry>)
+            .collect()
+    };
+    let switch_sub = Submenu::with_id(app, "switch", "Switch workspace", true)?;
+    if switch_items.is_empty() {
+        switch_sub.append(&none_item)?;
+    } else {
+        switch_sub.append_items(&switch_refs)?;
+    }
+    Menu::with_items(app, &[&show, &switch_sub, &ws_doctor, &doctor, &quit])
+}
+
+fn rebuild_tray_menu(app: &tauri::AppHandle) {
+    if let Ok(menu) = build_tray_menu(app) {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
+
+fn switch_workspace_from_tray(app: &tauri::AppHandle, name: &str) {
+    if use_workspace_with_options(
+        name,
+        &UseWorkspaceOptions {
+            backup: true,
+            restart_gateways: false,
+        },
+    )
+    .is_ok()
+    {
+        update_tray_tooltip(app);
+        rebuild_tray_menu(app);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.emit("workspace-changed", name);
+        }
+    }
+}
+
+fn publish_workspace_doctor_report(app: &tauri::AppHandle, report: &WorkspaceDoctorReport) {
+    show_main_window(app);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("workspace-doctor-report", report);
+    }
 }
 
 fn update_tray_tooltip(app: &tauri::AppHandle) {
@@ -320,13 +418,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            use tauri::menu::{Menu, MenuItem};
             use tauri::tray::TrayIconBuilder;
 
-            let show_i = MenuItem::with_id(app, "show", "Show Agent Doctor", true, None::<&str>)?;
-            let doctor_i = MenuItem::with_id(app, "doctor", "Run doctor", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &doctor_i, &quit_i])?;
+            let menu = build_tray_menu(app.handle())?;
 
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -335,12 +429,24 @@ pub fn run() {
                 .tooltip("Agent Doctor")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
+                    "workspace_doctor" => {
+                        if let Ok(report) = workspace_doctor() {
+                            publish_workspace_doctor_report(app, &report);
+                        }
+                    }
                     "doctor" => {
                         let report = run_doctor();
                         publish_doctor_report(app, &report);
                     }
                     "quit" => {
                         app.exit(0);
+                    }
+                    id if id.starts_with("workspace:") => {
+                        if let Some(name) = id.strip_prefix("workspace:") {
+                            if name != "none" {
+                                switch_workspace_from_tray(app, name);
+                            }
+                        }
                     }
                     _ => {}
                 })
@@ -368,6 +474,8 @@ pub fn run() {
             list_workspaces_command,
             use_workspace_command,
             workspace_status_command,
+            workspace_doctor_command,
+            workspace_fix_command,
             use_profile_command,
             get_hermes_model_command,
             set_hermes_model_command,

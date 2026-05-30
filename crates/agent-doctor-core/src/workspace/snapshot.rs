@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use super::WorkspaceEntry;
+use crate::adapters::util::home_join;
 
 const SKILLS_SNAPSHOT: &str = "snapshots/skills";
 
@@ -26,6 +27,9 @@ pub fn save_workspace_snapshot(entry: &WorkspaceEntry, data_root: &Path) -> Resu
 
     report.mcp_saved = save_mcp_snapshot(&entry.path, &dir.join("mcp.json"))?;
     report.skills_saved = save_skills_snapshot(&entry.path, &dir.join(SKILLS_SNAPSHOT))?;
+    if save_hermes_skills_snapshot(entry, &dir.join("hermes-skills"))? {
+        report.skills_saved = true;
+    }
 
     Ok(report)
 }
@@ -100,6 +104,20 @@ fn apply_skills_snapshot(project_path: &Path, snapshot_dir: &Path) -> Result<boo
     }
     fs::create_dir_all(project_skills.parent().unwrap())?;
     copy_dir_recursive(snapshot_dir, &project_skills)?;
+    Ok(true)
+}
+
+fn save_hermes_skills_snapshot(entry: &WorkspaceEntry, target_dir: &Path) -> Result<bool> {
+    let profile_skills = home_join(".hermes/profiles")
+        .join(&entry.hermes_profile)
+        .join("skills");
+    if !profile_skills.is_dir() {
+        return Ok(false);
+    }
+    if target_dir.exists() {
+        fs::remove_dir_all(target_dir).ok();
+    }
+    copy_dir_recursive(&profile_skills, target_dir)?;
     Ok(true)
 }
 

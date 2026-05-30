@@ -62,8 +62,14 @@
 - [ ] Local policy evaluate before ingest
 - [x] OpenClaw install via repair loop / playbook when `openclaw` binary missing
 - [x] OpenClaw repair playbook: config schema, env permissions, gateway from profile, API key scaffold
-- [ ] OpenClaw MCP/skills symlink checks (path reference auto-fix)
-- [ ] Team baseline drift detection for gateway, model provider, MCP, and Skill settings
+- [x] OpenClaw MCP/skills path reference checks in workspace doctor
+- [x] `workspace show` / `workspace matrix` — details and capability matrix
+- [x] Desktop workspace doctor summary
+- [x] Team baseline drift detection for gateway (company profile vs Hermes/OpenClaw)
+- [x] OpenClaw default agent routing (`default: true`, `agents.defaults.workspace`)
+- [x] Claude global MCP scaffold + migration hint on `workspace fix`
+- [x] Codex CODEX_HOME isolation marker + doctor guard
+- [ ] Team baseline drift — model provider / MCP / Skill full matrix
 - [ ] SkillLite adapter (optional runtime)
 
 ## Optional integrations

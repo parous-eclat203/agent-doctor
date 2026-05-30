@@ -99,11 +99,19 @@ pub fn bind_codex(codex_home: &Path) -> Result<RuntimeBindReport> {
     }
 
     fs::create_dir_all(codex_home.join("memories")).ok();
+    fs::write(
+        codex_home.join(".agent-doctor-codex-home"),
+        "# Agent Doctor isolated CODEX_HOME — do not symlink to ~/.codex\n",
+    )
+    .ok();
 
     Ok(RuntimeBindReport {
         runtime_id: "codex",
         action: "isolate CODEX_HOME".to_string(),
-        detail: format!("CODEX_HOME={}", codex_home.display()),
+        detail: format!(
+            "CODEX_HOME={} (overlay; memories under memories/)",
+            codex_home.display()
+        ),
         isolation_tier: "L2 (CODEX_HOME overlay — not native per-repo memory)",
     })
 }
@@ -117,9 +125,12 @@ pub fn bind_openclaw(agent_id: &str, workspace_path: &Path) -> Result<RuntimeBin
 
     Ok(RuntimeBindReport {
         runtime_id: "openclaw",
-        action: "bind agent workspace".to_string(),
-        detail: format!("agent_id={agent_id} workspace={}", workspace_path.display()),
-        isolation_tier: "L2 (agent workspace — configure routing separately)",
+        action: "bind agent workspace + default routing".to_string(),
+        detail: format!(
+            "agent_id={agent_id} workspace={} default=true agents.defaults.workspace set",
+            workspace_path.display()
+        ),
+        isolation_tier: "L2 (agent workspace + default routing)",
     })
 }
 
@@ -363,6 +374,66 @@ fn seed_openclaw_workspace_files(workspace_path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn openclaw_default_agent_id() -> Option<String> {
+    let config_path = home_join(".openclaw/openclaw.json");
+    if !config_path.exists() {
+        return None;
+    }
+    let raw = fs::read_to_string(&config_path).ok()?;
+    let value: JsonValue = serde_json::from_str(&raw).ok()?;
+    let agents = value.pointer("/agents/list")?.as_array()?;
+    for agent in agents {
+        if agent.get("default").and_then(JsonValue::as_bool) == Some(true) {
+            return agent
+                .get("id")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+        }
+    }
+    agents
+        .first()
+        .and_then(|agent| agent.get("id"))
+        .and_then(JsonValue::as_str)
+        .map(str::to_string)
+}
+
+pub fn openclaw_defaults_workspace() -> Option<PathBuf> {
+    let config_path = home_join(".openclaw/openclaw.json");
+    if !config_path.exists() {
+        return None;
+    }
+    let raw = fs::read_to_string(&config_path).ok()?;
+    let value: JsonValue = serde_json::from_str(&raw).ok()?;
+    value
+        .pointer("/agents/defaults/workspace")
+        .and_then(JsonValue::as_str)
+        .map(PathBuf::from)
+}
+
+pub fn scaffold_claude_mcp_isolation(project_path: &Path) -> Result<PathBuf> {
+    let hint_dir = project_path.join(".agent-doctor");
+    fs::create_dir_all(&hint_dir).with_context(|| format!("create {}", hint_dir.display()))?;
+    let hint = hint_dir.join("claude-mcp-isolation.md");
+    if !hint.exists() {
+        fs::write(
+            &hint,
+            r##"# Claude MCP isolation (Agent Doctor)
+
+User-scoped MCP in `~/.claude/settings.json` or `~/.claude.json` may apply across projects.
+
+Prefer project-scoped MCP:
+
+1. Define servers in this project's `.mcp.json`
+2. Remove or narrow user-scoped `mcpServers` when possible
+3. Run `agent-doctor workspace doctor` after changes
+
+See https://github.com/EXboys/agent-doctor/blob/main/docs/workspace.md
+"##,
+        )?;
+    }
+    Ok(hint)
+}
+
 fn upsert_openclaw_agent(agent_id: &str, workspace_path: &Path) -> Result<()> {
     let config_path = home_join(".openclaw/openclaw.json");
     if !config_path.exists() {
@@ -382,19 +453,36 @@ fn upsert_openclaw_agent(agent_id: &str, workspace_path: &Path) -> Result<()> {
     };
 
     let workspace_str = workspace_path.display().to_string();
-    if let Some(existing) = agents
-        .iter_mut()
-        .find(|agent| agent.get("id").and_then(JsonValue::as_str) == Some(agent_id))
-    {
-        if let Some(obj) = existing.as_object_mut() {
+    for agent in agents.iter_mut() {
+        let Some(obj) = agent.as_object_mut() else {
+            continue;
+        };
+        let is_target = obj.get("id").and_then(JsonValue::as_str) == Some(agent_id);
+        if is_target {
             obj.insert("workspace".to_string(), json!(workspace_str));
+            obj.insert("default".to_string(), json!(true));
+        } else {
+            obj.remove("default");
         }
-    } else {
+    }
+
+    if !agents
+        .iter()
+        .any(|agent| agent.get("id").and_then(JsonValue::as_str) == Some(agent_id))
+    {
         agents.push(json!({
             "id": agent_id,
             "name": agent_id,
             "workspace": workspace_str,
+            "default": true,
         }));
+    }
+
+    if let Some(agents_obj) = value.get_mut("agents").and_then(JsonValue::as_object_mut) {
+        let defaults = agents_obj.entry("defaults").or_insert_with(|| json!({}));
+        if let Some(defaults_obj) = defaults.as_object_mut() {
+            defaults_obj.insert("workspace".to_string(), json!(workspace_str));
+        }
     }
 
     let updated = serde_json::to_string_pretty(&value)?;
