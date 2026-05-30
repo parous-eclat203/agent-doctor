@@ -1,9 +1,10 @@
 use agent_doctor_core::{
-    enter_workspace, init_workspace, install_bash_hook, install_fish_hook, install_zsh_hook,
-    load_workspaces, match_workspace_for_path, remove_workspace, render_direnv_envrc,
-    render_shell_env_for_name, use_workspace_with_options, workspace_doctor, workspace_fix,
-    workspace_status, write_direnv_envrc, UseWorkspaceOptions, WorkspaceCheckStatus,
-    WorkspacesDocument,
+    enter_workspace, init_workspace, install_bash_hook, install_fish_hook, install_powershell_hook,
+    install_zsh_hook, load_workspaces, match_workspace_for_path, remove_workspace,
+    render_direnv_envrc, render_shell_env_for_name, use_workspace_with_options,
+    workspace_capability_matrix, workspace_doctor, workspace_fix, workspace_hook_status,
+    workspace_show, workspace_status, write_direnv_envrc, UseWorkspaceOptions,
+    WorkspaceCheckStatus, WorkspaceFixOptions, WorkspacesDocument,
 };
 use anyhow::{bail, Result};
 
@@ -36,6 +37,58 @@ pub fn list(json: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn show(name: &str, json: bool) -> Result<()> {
+    let report = workspace_show(name)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!(
+        "Workspace: {} {}",
+        report.name,
+        if report.active { "(active)" } else { "" }
+    );
+    println!("  project:  {}", report.entry.path.display());
+    println!("  hermes:   {}", report.entry.hermes_profile);
+    println!("  codex:    {}", report.entry.codex_home.display());
+    println!(
+        "  openclaw: {} → {}",
+        report.entry.openclaw_agent_id,
+        report.entry.openclaw_workspace.display()
+    );
+    println!("  data:     {}", report.data_root.display());
+    println!(
+        "  snapshot: mcp={} skills={}",
+        report.snapshot.mcp_snapshot, report.snapshot.skills_snapshot
+    );
+    Ok(())
+}
+
+pub fn matrix(json: bool) -> Result<()> {
+    let matrix = workspace_capability_matrix();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&matrix)?);
+        return Ok(());
+    }
+
+    println!(
+        "Agent Doctor workspace capability matrix ({})\n",
+        matrix.version
+    );
+    println!(
+        "{:<12} {:<18} {:<28} Agent Doctor",
+        "Runtime", "Dimension", "Native"
+    );
+    for row in &matrix.rows {
+        println!(
+            "{:<12} {:<18} {:<28} {} [{}]",
+            row.runtime, row.dimension, row.native, row.agent_doctor, row.tier
+        );
+    }
+    Ok(())
+}
+
 pub fn activate(name: &str, backup: bool, restart_gateways: bool) -> Result<()> {
     let report = use_workspace_with_options(
         name,
@@ -61,11 +114,10 @@ pub fn enter(path: Option<std::path::PathBuf>, git_root: bool) -> Result<()> {
     println!("  project: {}", report.path.display());
     println!();
     println!("Run in this shell:");
-    println!(
-        "  eval \"$(agent-doctor workspace env --shell zsh --name {})\"",
-        report.name
-    );
-    println!("  cd {}", report.path.display());
+    println!("  {}", report.zsh_enter);
+    println!();
+    println!("PowerShell:");
+    println!("  {}", report.powershell_enter);
     Ok(())
 }
 
@@ -105,17 +157,24 @@ pub fn hook_install(shell: &str) -> Result<()> {
             let path = install_fish_hook()?;
             print_hook_instructions("fish", &path);
         }
+        "powershell" | "pwsh" => {
+            let path = install_powershell_hook()?;
+            print_powershell_hook_instructions(&path);
+        }
         "all" => {
             let zsh = install_zsh_hook()?;
             let bash = install_bash_hook()?;
             let fish = install_fish_hook()?;
+            let powershell = install_powershell_hook()?;
             print_hook_instructions("zsh", &zsh);
             println!();
             print_hook_instructions("bash", &bash);
             println!();
             print_hook_instructions("fish", &fish);
+            println!();
+            print_powershell_hook_instructions(&powershell);
         }
-        other => bail!("unsupported shell '{other}' — use zsh, bash, fish, or all"),
+        other => bail!("unsupported shell '{other}' — use zsh, bash, fish, powershell, or all"),
     }
     Ok(())
 }
@@ -130,6 +189,44 @@ fn print_hook_instructions(shell: &str, path: &std::path::Path) {
     };
     println!("Add to {rc}:");
     println!("  source \"{}\"", path.display());
+}
+
+fn print_powershell_hook_instructions(path: &std::path::Path) {
+    println!("Installed PowerShell hook: {}", path.display());
+    println!();
+    println!("Add to $PROFILE (Documents/PowerShell/Microsoft.PowerShell_profile.ps1):");
+    println!("  . \"{}\"", path.display());
+}
+
+pub fn hook_status(json: bool) -> Result<()> {
+    let statuses = workspace_hook_status()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&statuses)?);
+        return Ok(());
+    }
+
+    println!("Workspace shell hook status\n");
+    for status in &statuses {
+        let hook_marker = if status.hook_installed { "✓" } else { "✗" };
+        let rc_marker = if status.rc_sources_hook {
+            "✓"
+        } else if status.rc_file.is_some() {
+            "!"
+        } else {
+            "·"
+        };
+        println!(
+            "{hook_marker} {} hook: {}",
+            status.shell,
+            status.hook_path.display()
+        );
+        if let Some(rc) = &status.rc_file {
+            println!("    {rc_marker} rc sources hook: {}", rc.display());
+        } else {
+            println!("    · rc file not found");
+        }
+    }
+    Ok(())
 }
 
 pub fn status(path: Option<std::path::PathBuf>, json: bool) -> Result<()> {
@@ -186,8 +283,17 @@ pub fn doctor(json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn fix(dry_run: bool, restart_gateways: bool, json: bool) -> Result<()> {
-    let report = workspace_fix(dry_run, restart_gateways)?;
+pub fn fix(
+    dry_run: bool,
+    restart_gateways: bool,
+    migrate_claude_mcp: bool,
+    json: bool,
+) -> Result<()> {
+    let report = workspace_fix(&WorkspaceFixOptions {
+        dry_run,
+        restart_gateways,
+        migrate_claude_mcp,
+    })?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -266,10 +372,10 @@ fn print_use_report(report: &agent_doctor_core::UseWorkspaceReport) {
     println!();
     println!("Apply in this shell:");
     println!(
-        "  eval \"$(agent-doctor workspace env --shell zsh --name {})\"",
+        "  cd {} && eval \"$(agent-doctor workspace env --shell zsh --name {})\"",
+        report.path.display(),
         report.name
     );
-    println!("  cd {}", report.path.display());
 }
 
 fn print_document(doc: &WorkspacesDocument) {

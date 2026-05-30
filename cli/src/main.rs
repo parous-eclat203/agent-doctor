@@ -164,6 +164,17 @@ enum WorkspaceAction {
         #[arg(long)]
         json: bool,
     },
+    /// Show details for one workspace
+    Show {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print workspace isolation capability matrix
+    Matrix {
+        #[arg(long)]
+        json: bool,
+    },
     /// Activate a workspace and write active-workspace.env
     Use {
         name: String,
@@ -225,6 +236,9 @@ enum WorkspaceAction {
         /// Restart Hermes/OpenClaw gateways when fixing gateway mismatch
         #[arg(long)]
         restart_gateways: bool,
+        /// Merge global Claude MCP servers into project .mcp.json (does not remove global)
+        #[arg(long)]
+        migrate_claude_mcp: bool,
         #[arg(long)]
         json: bool,
     },
@@ -239,11 +253,16 @@ enum WorkspaceAction {
 
 #[derive(Subcommand)]
 enum WorkspaceHookAction {
-    /// Install shell cd hooks (zsh and/or bash)
+    /// Install shell cd hooks (zsh, bash, fish, powershell, or all)
     Install {
-        /// Shell hook to install: zsh, bash, fish, or all
+        /// Shell hook to install: zsh, bash, fish, powershell, or all
         #[arg(long, default_value = "all")]
         shell: String,
+    },
+    /// Check whether workspace hooks are installed and sourced
+    Status {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -317,6 +336,8 @@ fn main() -> Result<()> {
                 git_root,
             } => commands::workspace::init(path, name, git_root)?,
             WorkspaceAction::List { json } => commands::workspace::list(json)?,
+            WorkspaceAction::Show { name, json } => commands::workspace::show(&name, json)?,
+            WorkspaceAction::Matrix { json } => commands::workspace::matrix(json)?,
             WorkspaceAction::Use {
                 name,
                 no_backup,
@@ -338,14 +359,16 @@ fn main() -> Result<()> {
                 WorkspaceHookAction::Install { shell } => {
                     commands::workspace::hook_install(&shell)?
                 }
+                WorkspaceHookAction::Status { json } => commands::workspace::hook_status(json)?,
             },
             WorkspaceAction::Status { path, json } => commands::workspace::status(path, json)?,
             WorkspaceAction::Doctor { json } => commands::workspace::doctor(json)?,
             WorkspaceAction::Fix {
                 dry_run,
                 restart_gateways,
+                migrate_claude_mcp,
                 json,
-            } => commands::workspace::fix(dry_run, restart_gateways, json)?,
+            } => commands::workspace::fix(dry_run, restart_gateways, migrate_claude_mcp, json)?,
             WorkspaceAction::Remove { name, purge } => commands::workspace::remove(&name, purge)?,
         },
     }

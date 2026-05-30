@@ -1,12 +1,22 @@
 use anyhow::{Context, Result};
 
-use super::backends::{bind_claude_code, bind_codex, bind_hermes, bind_openclaw};
+use super::backends::{
+    bind_claude_code, bind_codex, bind_hermes, bind_openclaw, scaffold_claude_mcp_isolation,
+};
+use super::claude_mcp::migrate_claude_global_mcp_to_project;
 use super::gateway::restart_workspace_gateways;
 use super::snapshot::{apply_workspace_snapshot, save_workspace_snapshot};
 use super::{
     load_workspaces, save_workspaces, workspace_data_root, workspace_doctor, write_active_env,
     WorkspaceCheckStatus, WorkspaceDoctorReport, WorkspaceEntry,
 };
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceFixOptions {
+    pub dry_run: bool,
+    pub restart_gateways: bool,
+    pub migrate_claude_mcp: bool,
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WorkspaceFixAction {
@@ -22,7 +32,7 @@ pub struct WorkspaceFixReport {
     pub actions: Vec<WorkspaceFixAction>,
 }
 
-pub fn workspace_fix(dry_run: bool, restart_gateways: bool) -> Result<WorkspaceFixReport> {
+pub fn workspace_fix(options: &WorkspaceFixOptions) -> Result<WorkspaceFixReport> {
     let doc = load_workspaces()?;
     let Some(active_name) = doc.active.clone() else {
         return Ok(WorkspaceFixReport {
@@ -49,51 +59,77 @@ pub fn workspace_fix(dry_run: bool, restart_gateways: bool) -> Result<WorkspaceF
     };
 
     let doctor = workspace_doctor()?;
-    let mut actions = plan_fixes(&active_name, &entry, &doctor);
+    let mut actions = plan_fixes(&active_name, &entry, &doctor, options);
 
-    if !dry_run {
+    if options.migrate_claude_mcp {
+        let migration = migrate_claude_global_mcp_to_project(&entry.path, options.dry_run)?;
+        actions.insert(
+            0,
+            WorkspaceFixAction {
+                id: "workspace.claude.mcp_migration".into(),
+                title: "Merge global Claude MCP into project .mcp.json".into(),
+                applied: migration.applied,
+                detail: format_migration_detail(&migration),
+            },
+        );
+    }
+
+    if !options.dry_run {
         for action in &mut actions {
             if action.applied {
                 continue;
             }
             match action.id.as_str() {
+                "workspace.claude.mcp_migration" => {}
                 "workspace.hermes.profile" => {
                     bind_hermes(&entry.hermes_profile, &entry.path)?;
                     action.applied = true;
                     action.detail = format!("Activated Hermes profile '{}'", entry.hermes_profile);
                 }
-                "workspace.openclaw.workspace" => {
+                "workspace.openclaw.workspace"
+                | "workspace.openclaw.routing.default"
+                | "workspace.openclaw.routing.defaults_workspace" => {
                     bind_openclaw(&entry.openclaw_agent_id, &entry.openclaw_workspace)?;
                     action.applied = true;
                     action.detail = format!(
-                        "Updated openclaw.json workspace for agent '{}'",
+                        "Set default agent '{}' and agents.defaults.workspace",
                         entry.openclaw_agent_id
                     );
                 }
-                "workspace.codex.home" | "workspace.codex.global_memory" => {
+                "workspace.openclaw.agent_env" => {
+                    write_active_env(&active_name, &entry)?;
+                    action.applied = true;
+                    action.detail = "Refreshed active-workspace.env (OPENCLAW_AGENT_ID)".into();
+                }
+                "workspace.codex.home"
+                | "workspace.codex.global_memory"
+                | "workspace.codex.isolation_marker"
+                | "workspace.codex.shared_global_home" => {
                     write_active_env(&active_name, &entry)?;
                     bind_codex(&entry.codex_home)?;
                     action.applied = true;
                     action.detail = format!(
-                        "Refreshed active-workspace.env (CODEX_HOME={})",
+                        "Refreshed isolated CODEX_HOME at {}",
                         entry.codex_home.display()
                     );
                 }
-                "workspace.claude.project_mcp" => {
+                "workspace.claude.project_mcp" | "workspace.claude.global_mcp" => {
                     let data_root = workspace_data_root(&active_name)?;
                     let report = apply_workspace_snapshot(&entry, &data_root)?;
-                    if report.mcp_applied {
-                        action.applied = true;
-                        action.detail = "Restored project .mcp.json from workspace snapshot".into();
+                    bind_claude_code(&entry.path)?;
+                    save_workspace_snapshot(&entry, &data_root)?;
+                    let hint = scaffold_claude_mcp_isolation(&entry.path)?;
+                    action.applied = true;
+                    action.detail = if report.mcp_applied {
+                        format!(
+                            "Restored .mcp.json; wrote migration hint {}",
+                            hint.display()
+                        )
                     } else {
-                        bind_claude_code(&entry.path)?;
-                        save_workspace_snapshot(&entry, &data_root)?;
-                        action.applied = true;
-                        action.detail =
-                            "Ensured .claude/ scaffold and refreshed MCP snapshot template".into();
-                    }
+                        format!("Scaffolded project MCP + hint {}", hint.display())
+                    };
                 }
-                "workspace.hermes.gateway_mismatch" if restart_gateways => {
+                "workspace.hermes.gateway_mismatch" if options.restart_gateways => {
                     let reports = restart_workspace_gateways(&entry);
                     action.applied = reports.iter().any(|report| report.success);
                     action.detail = reports
@@ -114,9 +150,10 @@ pub fn workspace_fix(dry_run: bool, restart_gateways: bool) -> Result<WorkspaceF
 }
 
 fn plan_fixes(
-    active_name: &str,
+    _active_name: &str,
     entry: &WorkspaceEntry,
     doctor: &WorkspaceDoctorReport,
+    options: &WorkspaceFixOptions,
 ) -> Vec<WorkspaceFixAction> {
     let mut actions = Vec::new();
 
@@ -129,9 +166,15 @@ fn plan_fixes(
             check.id.as_str(),
             "workspace.hermes.profile"
                 | "workspace.openclaw.workspace"
+                | "workspace.openclaw.routing.default"
+                | "workspace.openclaw.routing.defaults_workspace"
+                | "workspace.openclaw.agent_env"
                 | "workspace.codex.home"
                 | "workspace.codex.global_memory"
+                | "workspace.codex.isolation_marker"
+                | "workspace.codex.shared_global_home"
                 | "workspace.claude.project_mcp"
+                | "workspace.claude.global_mcp"
                 | "workspace.hermes.gateway_mismatch"
         );
 
@@ -143,10 +186,11 @@ fn plan_fixes(
             id: check.id.clone(),
             title: check.title.clone(),
             applied: false,
-            detail: if check.id == "workspace.claude.project_mcp" {
-                format!(
-                    "Will restore .mcp.json from ~/.config/agent-doctor/workspaces/{active_name}/snapshots/"
-                )
+            detail: if check.id == "workspace.claude.project_mcp"
+                || check.id == "workspace.claude.global_mcp"
+            {
+                "Will restore/scaffold .mcp.json and write .agent-doctor/claude-mcp-isolation.md"
+                    .into()
             } else if check.id == "workspace.hermes.gateway_mismatch" {
                 "Will attempt Hermes/OpenClaw gateway restart (pass --restart-gateways)".into()
             } else {
@@ -155,7 +199,7 @@ fn plan_fixes(
         });
     }
 
-    if actions.is_empty() {
+    if actions.is_empty() && !options.migrate_claude_mcp {
         actions.push(WorkspaceFixAction {
             id: "workspace.fix.nothing".into(),
             title: "No auto-fixable issues".into(),
@@ -167,6 +211,24 @@ fn plan_fixes(
 
     let _ = entry;
     actions
+}
+
+fn format_migration_detail(migration: &super::claude_mcp::ClaudeMcpMigrationReport) -> String {
+    let mode = if migration.dry_run {
+        "preview"
+    } else if migration.applied {
+        "applied"
+    } else {
+        "no-op"
+    };
+    format!(
+        "{mode}: sources=[{}]; add={:?}; skip={:?}; conflicts={:?}; wrote={}; global servers NOT removed — review before deleting ~/.claude/settings.json mcpServers",
+        migration.global_sources.join(", "),
+        migration.added_servers,
+        migration.skipped_servers,
+        migration.conflict_servers,
+        migration.project_mcp_path.display(),
+    )
 }
 
 pub fn remove_workspace(name: &str, purge_data: bool) -> Result<()> {

@@ -91,3 +91,12 @@ agent-doctor workspace remove my-app --purge   # delete workspace data dir
 ```
 
 Does not delete Hermes profiles or OpenClaw agents — only the Agent Doctor registry entry.
+
+## Capability matrix
+
+See [capability-matrix.md](capability-matrix.md) or run:
+
+```bash
+agent-doctor workspace matrix
+agent-doctor workspace show my-app
+```

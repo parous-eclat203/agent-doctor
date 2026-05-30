@@ -21,7 +21,7 @@ cargo run -p agent-doctor -- doctor --json
 | `install <runtime>` | All registered runtimes: rule install when available; else / on failure → AI install |
 | `profile list/init/use` | Implemented (Hermes model switching) |
 | `config show` | Implemented (Hermes) |
-| `workspace init/list/use/status/doctor/fix/direnv` | Per-project isolation for Hermes, Claude Code, Codex, OpenClaw |
+| `workspace init/list/show/use/status/doctor/fix/matrix/direnv` | Per-project isolation for Hermes, Claude Code, Codex, OpenClaw |
 | `setup --url --key` | Company gateway profile → profile.env + Hermes/OpenClaw/Claude/Codex configs |
 | `sync` | Stub |
 | `policy pull` | Stub |

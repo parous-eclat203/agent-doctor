@@ -132,6 +132,9 @@ const presetTriggerLabelEl = document.querySelector<HTMLElement>("#preset-trigge
 const presetMenuEl = document.querySelector<HTMLElement>("#preset-menu")!;
 const workspaceStatusEl = document.querySelector<HTMLElement>("#workspace-status")!;
 const workspaceApplyEl = document.querySelector<HTMLButtonElement>("#workspace-apply")!;
+const workspaceDoctorEl = document.querySelector<HTMLButtonElement>("#workspace-doctor")!;
+const workspaceFixEl = document.querySelector<HTMLButtonElement>("#workspace-fix")!;
+const workspaceChecksEl = document.querySelector<HTMLUListElement>("#workspace-checks")!;
 const workspaceHintEl = document.querySelector<HTMLElement>("#workspace-hint")!;
 const workspacePickerEl = document.querySelector<HTMLElement>("#workspace-picker")!;
 const workspaceTriggerEl = document.querySelector<HTMLButtonElement>("#workspace-trigger")!;
@@ -1171,6 +1174,121 @@ async function applyWorkspace() {
   }
 }
 
+async function doctorWorkspace() {
+  workspaceDoctorEl.disabled = true;
+  workspaceHintEl.textContent = t("workspaces.doctorRunning");
+  try {
+    const report = await invoke<WorkspaceDoctorReport>("workspace_doctor_command");
+    renderWorkspaceChecks(report);
+  } catch (error) {
+    workspaceChecksEl.hidden = true;
+    workspaceChecksEl.innerHTML = "";
+    workspaceHintEl.textContent = String(error);
+  } finally {
+    workspaceDoctorEl.disabled = false;
+  }
+}
+
+async function fixWorkspace() {
+  workspaceFixEl.disabled = true;
+  workspaceDoctorEl.disabled = true;
+  workspaceHintEl.textContent = t("workspaces.fixRunning");
+  try {
+    const report = await invoke<WorkspaceFixReport>("workspace_fix_command", {
+      migrateClaudeMcp: false,
+    });
+    const applied = report.actions.filter((action) => action.applied).length;
+    workspaceHintEl.textContent = t("workspaces.fixSummary", { count: String(applied) });
+    await doctorWorkspace();
+  } catch (error) {
+    workspaceHintEl.textContent = String(error);
+  } finally {
+    workspaceFixEl.disabled = false;
+    workspaceDoctorEl.disabled = false;
+  }
+}
+
+interface WorkspaceCheck {
+  id: string;
+  title: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}
+
+interface WorkspaceDoctorReport {
+  active: string | null;
+  checks: WorkspaceCheck[];
+}
+
+interface WorkspaceFixReport {
+  active: string | null;
+  actions: Array<{
+    id: string;
+    title: string;
+    applied: boolean;
+    detail: string;
+  }>;
+}
+
+function workspaceStatusLabel(status: WorkspaceCheck["status"]): string {
+  switch (status) {
+    case "pass":
+      return t("repair.pass");
+    case "warn":
+      return t("repair.warn");
+    case "fail":
+      return t("repair.fail");
+  }
+}
+
+function workspaceStatusClass(status: WorkspaceCheck["status"]): string {
+  if (status === "pass") {
+    return "pass";
+  }
+  if (status === "warn") {
+    return "warn";
+  }
+  return "fail";
+}
+
+function renderWorkspaceChecks(report: WorkspaceDoctorReport) {
+  if (!report.checks.length) {
+    workspaceChecksEl.hidden = true;
+    workspaceChecksEl.innerHTML = "";
+    workspaceHintEl.textContent = t("workspaces.noActive");
+    return;
+  }
+
+  workspaceChecksEl.hidden = false;
+  workspaceChecksEl.innerHTML = report.checks
+    .map(
+      (check) => `
+        <li class="repair-check">
+          <span class="repair-check-status ${workspaceStatusClass(check.status)}">${escapeHtml(workspaceStatusLabel(check.status))}</span>
+          <span class="repair-check-body">
+            <strong>${escapeHtml(check.title)}</strong>
+            <span>${escapeHtml(check.detail)}</span>
+          </span>
+        </li>
+      `,
+    )
+    .join("");
+
+  let pass = 0;
+  let warn = 0;
+  let fail = 0;
+  for (const check of report.checks) {
+    if (check.status === "pass") pass += 1;
+    else if (check.status === "warn") warn += 1;
+    else fail += 1;
+  }
+  workspaceHintEl.textContent = t("workspaces.doctorSummary", {
+    pass: String(pass),
+    warn: String(warn),
+    fail: String(fail),
+  });
+}
+
 function setLoading(loading: boolean) {
   refreshBtn.disabled = loading;
   refreshBtn.classList.toggle("is-loading", loading);
@@ -1523,6 +1641,14 @@ workspaceApplyEl.addEventListener("click", () => {
   void applyWorkspace();
 });
 
+workspaceDoctorEl.addEventListener("click", () => {
+  void doctorWorkspace();
+});
+
+workspaceFixEl.addEventListener("click", () => {
+  void fixWorkspace();
+});
+
 workspaceTriggerEl.addEventListener("click", () => {
   toggleWorkspaceMenu();
 });
@@ -1576,6 +1702,14 @@ document.addEventListener("keydown", (event) => {
 
 void listen<DoctorReport>("doctor-report", (event) => {
   void renderReport(event.payload);
+});
+
+void listen("workspace-changed", () => {
+  void loadWorkspaces();
+});
+
+void listen<WorkspaceDoctorReport>("workspace-doctor-report", (event) => {
+  renderWorkspaceChecks(event.payload);
 });
 
 setLocale(getLocale());

@@ -19,9 +19,14 @@ use self::path::{
 
 pub mod backends;
 pub mod backup;
+pub mod baseline;
+pub mod claude_mcp;
 pub mod fix;
 pub mod gateway;
+pub mod hook_status;
+pub mod matrix;
 pub mod path;
+pub mod paths_check;
 pub mod shell;
 pub mod snapshot;
 
@@ -72,16 +77,39 @@ pub struct UseWorkspaceOptions {
     pub restart_gateways: bool,
 }
 
-pub use fix::{remove_workspace, workspace_fix, WorkspaceFixAction, WorkspaceFixReport};
+pub use claude_mcp::{migrate_claude_global_mcp_to_project, ClaudeMcpMigrationReport};
+pub use fix::{
+    remove_workspace, workspace_fix, WorkspaceFixAction, WorkspaceFixOptions, WorkspaceFixReport,
+};
 pub use gateway::{gateway_restart_hint, restart_workspace_gateways, GatewayRestartReport};
+pub use hook_status::{workspace_hook_status, ShellHookStatus};
+pub use matrix::{workspace_capability_matrix, CapabilityCell, CapabilityMatrix};
+pub use paths_check::{scan_workspace_path_references, PathReferenceIssue};
 pub use shell::{
     bash_hook_file_path, enter_workspace, fish_hook_file_path, hook_file_path, install_bash_hook,
-    install_fish_hook, install_zsh_hook, match_workspace_for_path, render_direnv_envrc,
-    render_shell_env, render_shell_env_for_name, write_direnv_envrc, EnterWorkspaceReport,
+    install_fish_hook, install_powershell_hook, install_zsh_hook, match_workspace_for_path,
+    powershell_hook_file_path, render_direnv_envrc, render_shell_env, render_shell_env_for_name,
+    write_direnv_envrc, EnterWorkspaceReport,
 };
 pub use snapshot::{
     apply_workspace_snapshot, save_workspace_snapshot, snapshot_dir, SnapshotReport,
 };
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceSnapshotStatus {
+    pub mcp_snapshot: bool,
+    pub skills_snapshot: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceShowReport {
+    pub name: String,
+    pub active: bool,
+    pub entry: WorkspaceEntry,
+    pub data_root: PathBuf,
+    pub env_file: PathBuf,
+    pub snapshot: WorkspaceSnapshotStatus,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceStatusReport {
@@ -354,6 +382,28 @@ pub fn workspace_status(at: Option<PathBuf>) -> Result<WorkspaceStatusReport> {
     })
 }
 
+pub fn workspace_show(name: &str) -> Result<WorkspaceShowReport> {
+    let doc = load_workspaces()?;
+    let entry = doc
+        .workspaces
+        .get(name)
+        .with_context(|| format!("workspace '{name}' not found"))?
+        .clone();
+    let data_root = workspace_data_root(name)?;
+    let snap_dir = snapshot_dir(&data_root);
+    Ok(WorkspaceShowReport {
+        name: name.to_string(),
+        active: doc.active.as_deref() == Some(name),
+        entry,
+        data_root,
+        env_file: active_env_path()?,
+        snapshot: WorkspaceSnapshotStatus {
+            mcp_snapshot: snap_dir.join("mcp.json").exists(),
+            skills_snapshot: snap_dir.join("skills").is_dir(),
+        },
+    })
+}
+
 pub fn workspace_doctor() -> Result<WorkspaceDoctorReport> {
     let doc = load_workspaces()?;
     let current = cwd()?;
@@ -423,6 +473,9 @@ pub fn workspace_doctor() -> Result<WorkspaceDoctorReport> {
     ));
 
     checks.extend(claude_doctor_checks(&entry));
+    checks.extend(baseline::openclaw_routing_checks(&entry));
+    checks.extend(baseline::baseline_drift_checks(&entry));
+    checks.extend(baseline::codex_isolation_checks(&entry));
 
     let gateways = hermes_gateway_profiles();
     if !gateways.is_empty() {
@@ -457,6 +510,47 @@ pub fn workspace_doctor() -> Result<WorkspaceDoctorReport> {
             status: WorkspaceCheckStatus::Warn,
             detail: "Source ~/.config/agent-doctor/active-workspace.env before launching Codex to isolate memories."
                 .to_string(),
+        });
+    }
+
+    let openclaw_env = std::env::var("OPENCLAW_AGENT_ID").unwrap_or_default();
+    if !openclaw_env.is_empty() && openclaw_env != entry.openclaw_agent_id {
+        checks.push(WorkspaceCheck {
+            id: "workspace.openclaw.agent_env".to_string(),
+            title: "OPENCLAW_AGENT_ID differs from workspace".to_string(),
+            status: WorkspaceCheckStatus::Warn,
+            detail: format!(
+                "expected='{}' actual='{openclaw_env}' — source active-workspace.env",
+                entry.openclaw_agent_id
+            ),
+        });
+    }
+
+    let path_issues = scan_workspace_path_references(&entry);
+    if path_issues.is_empty() {
+        checks.push(WorkspaceCheck {
+            id: "workspace.paths.references".to_string(),
+            title: "MCP/skills path references look healthy".to_string(),
+            status: WorkspaceCheckStatus::Pass,
+            detail: "No missing obvious MCP/skills/workspace path references".to_string(),
+        });
+    } else {
+        let sample = path_issues
+            .iter()
+            .take(3)
+            .map(|issue| format!("{} → {}", issue.source, issue.path))
+            .collect::<Vec<_>>()
+            .join("; ");
+        checks.push(WorkspaceCheck {
+            id: "workspace.paths.references".to_string(),
+            title: "Missing MCP/skills path references".to_string(),
+            status: WorkspaceCheckStatus::Warn,
+            detail: format!(
+                "{} missing path(s): {}{}",
+                path_issues.len(),
+                sample,
+                if path_issues.len() > 3 { " …" } else { "" }
+            ),
         });
     }
 
@@ -618,7 +712,8 @@ fn openclaw_runtime_status(entry: &WorkspaceEntry) -> RuntimeStatus {
         expected,
         actual,
         aligned,
-        hint: "Ensure openclaw.json agents.list workspace matches this workspace".into(),
+        hint: "Run `agent-doctor workspace use <name>` to set default agent + agents.defaults.workspace"
+            .into(),
     }
 }
 

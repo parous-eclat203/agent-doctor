@@ -12,6 +12,7 @@ use super::{
 const HOOK_FILE: &str = "hooks/workspace.zsh";
 const BASH_HOOK_FILE: &str = "hooks/workspace.bash";
 const FISH_HOOK_FILE: &str = "hooks/workspace.fish";
+const POWERSHELL_HOOK_FILE: &str = "hooks/workspace.ps1";
 
 pub fn match_workspace_for_path(
     path: Option<PathBuf>,
@@ -52,14 +53,31 @@ pub fn enter_workspace(
 
     let zsh_eval = render_shell_env("zsh", &use_report)?;
     let bash_eval = render_shell_env("bash", &use_report)?;
+    let powershell_eval = render_shell_env("powershell", &use_report)?;
+    let cd_command = format!("cd {}", shell_single_quote(&use_report.path));
+    let zsh_enter =
+        format!("{cd_command} && eval \"$(agent-doctor workspace env --shell zsh --name {name})\"");
+    let bash_enter = format!(
+        "{cd_command} && eval \"$(agent-doctor workspace env --shell bash --name {name})\""
+    );
+    let powershell_enter = format!(
+        "Set-Location -LiteralPath {}; {}",
+        powershell_single_quote(&use_report.path),
+        powershell_eval.replace('\n', "; ")
+    );
 
     Ok(EnterWorkspaceReport {
         name,
         path: use_report.path.clone(),
         switched,
         use_report,
+        cd_command,
         zsh_eval,
         bash_eval,
+        zsh_enter,
+        bash_enter,
+        powershell_eval,
+        powershell_enter,
     })
 }
 
@@ -90,26 +108,55 @@ pub fn render_shell_env(shell: &str, report: &UseWorkspaceReport) -> Result<Stri
     let mut lines = Vec::new();
     match shell {
         "zsh" | "bash" => {
-            lines.push(format!("export AGENT_DOCTOR_WORKSPACE='{}'", report.name));
             lines.push(format!(
-                "export AGENT_DOCTOR_PROJECT_ROOT='{}'",
-                entry.path.display()
+                "export AGENT_DOCTOR_WORKSPACE={}",
+                shell_single_quote(&report.name)
             ));
             lines.push(format!(
-                "export HERMES_HOME='{}'",
-                entry.hermes_profile_home().display()
+                "export AGENT_DOCTOR_PROJECT_ROOT={}",
+                shell_single_quote(&entry.path)
             ));
             lines.push(format!(
-                "export CODEX_HOME='{}'",
-                entry.codex_home.display()
+                "export HERMES_HOME={}",
+                shell_single_quote(entry.hermes_profile_home())
             ));
             lines.push(format!(
-                "export OPENCLAW_AGENT_ID='{}'",
-                entry.openclaw_agent_id
+                "export CODEX_HOME={}",
+                shell_single_quote(&entry.codex_home)
             ));
             lines.push(format!(
-                "export OPENCLAW_WORKSPACE='{}'",
-                entry.openclaw_workspace.display()
+                "export OPENCLAW_AGENT_ID={}",
+                shell_single_quote(&entry.openclaw_agent_id)
+            ));
+            lines.push(format!(
+                "export OPENCLAW_WORKSPACE={}",
+                shell_single_quote(&entry.openclaw_workspace)
+            ));
+        }
+        "powershell" | "pwsh" => {
+            lines.push(format!(
+                "$env:AGENT_DOCTOR_WORKSPACE={}",
+                powershell_single_quote(&report.name)
+            ));
+            lines.push(format!(
+                "$env:AGENT_DOCTOR_PROJECT_ROOT={}",
+                powershell_single_quote(&entry.path)
+            ));
+            lines.push(format!(
+                "$env:HERMES_HOME={}",
+                powershell_single_quote(entry.hermes_profile_home())
+            ));
+            lines.push(format!(
+                "$env:CODEX_HOME={}",
+                powershell_single_quote(&entry.codex_home)
+            ));
+            lines.push(format!(
+                "$env:OPENCLAW_AGENT_ID={}",
+                powershell_single_quote(&entry.openclaw_agent_id)
+            ));
+            lines.push(format!(
+                "$env:OPENCLAW_WORKSPACE={}",
+                powershell_single_quote(&entry.openclaw_workspace)
             ));
         }
         _ => {
@@ -132,6 +179,10 @@ pub fn install_bash_hook() -> Result<PathBuf> {
 
 pub fn install_fish_hook() -> Result<PathBuf> {
     write_fish_hook(&fish_hook_file_path()?)
+}
+
+pub fn install_powershell_hook() -> Result<PathBuf> {
+    write_powershell_hook(&powershell_hook_file_path()?)
 }
 
 fn write_zsh_hook(hook_path: &Path) -> Result<PathBuf> {
@@ -225,6 +276,12 @@ pub fn fish_hook_file_path() -> Result<PathBuf> {
         .context("could not resolve config directory")
 }
 
+pub fn powershell_hook_file_path() -> Result<PathBuf> {
+    dirs::config_dir()
+        .map(|dir| dir.join("agent-doctor").join(POWERSHELL_HOOK_FILE))
+        .context("could not resolve config directory")
+}
+
 pub fn render_direnv_envrc(name: &str) -> Result<String> {
     Ok(format!(
         r#"# Agent Doctor workspace — allow with: direnv allow
@@ -282,6 +339,57 @@ end
     Ok(hook_path.to_path_buf())
 }
 
+fn write_powershell_hook(hook_path: &Path) -> Result<PathBuf> {
+    if let Some(parent) = hook_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let binary = agent_doctor_binary();
+
+    let contents = format!(
+        r#"# Agent Doctor workspace auto-align (PowerShell)
+# Add to $PROFILE: . "{hook}"
+
+function Global:__agent_doctor_workspace_align {{
+  $ws = & {binary} workspace match 2>$null
+  if (-not $ws) {{ return }}
+  if ($env:AGENT_DOCTOR_WORKSPACE -ne $ws) {{
+    Invoke-Expression (& {binary} workspace env --shell powershell --name $ws 2>$null)
+  }}
+}}
+
+if (-not (Get-Command __agent_doctor_workspace_align -ErrorAction SilentlyContinue)) {{
+  function Global:__agent_doctor_workspace_align {{ }}
+}}
+
+if ($null -eq $function:prompt -or $function:prompt -notlike '*__agent_doctor_workspace_align*') {{
+  $script:__agent_doctor_old_prompt = $function:prompt
+  function Global:Prompt {{
+    __agent_doctor_workspace_align
+    if ($null -ne $script:__agent_doctor_old_prompt) {{
+      & $script:__agent_doctor_old_prompt
+    }}
+  }}
+}}
+"#,
+        hook = hook_path.display(),
+        binary = binary,
+    );
+
+    fs::write(hook_path, contents).with_context(|| format!("write {}", hook_path.display()))?;
+    Ok(hook_path.to_path_buf())
+}
+
+fn shell_single_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
+    let text = value.as_ref().to_string_lossy();
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn powershell_single_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
+    let text = value.as_ref().to_string_lossy();
+    format!("'{}'", text.replace('\'', "''"))
+}
+
 impl WorkspaceEntry {
     pub(crate) fn hermes_profile_home(&self) -> PathBuf {
         crate::adapters::util::home_join(".hermes/profiles").join(&self.hermes_profile)
@@ -294,6 +402,11 @@ pub struct EnterWorkspaceReport {
     pub path: PathBuf,
     pub switched: bool,
     pub use_report: UseWorkspaceReport,
+    pub cd_command: String,
     pub zsh_eval: String,
     pub bash_eval: String,
+    pub zsh_enter: String,
+    pub bash_enter: String,
+    pub powershell_eval: String,
+    pub powershell_enter: String,
 }
