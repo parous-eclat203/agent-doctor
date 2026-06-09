@@ -1,6 +1,0 @@
-[alias]
-check-cli = "clippy -p agent-doctor-core -p agent-doctor --all-targets -- -D warnings"
-test-cli = "test -p agent-doctor-core -p agent-doctor"
-
-[build]
-incremental = true
